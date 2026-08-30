@@ -1,25 +1,31 @@
 # { "Depends": "py-genlayer:15qfivjvy80800rh998pcxmd2m8va1wq2qzqhz850n8ggcr4i9q0" }
 
 from genlayer import *
+import hashlib
 import json
 import re
 
-# ReputationStake v0.1 — reputation escrow for trustless partnerships.
+# ReputationStake v0.2 — reputation escrow with consensus-gated slash.
 # Copyright (c) 2026 Valentyn Zubok. MIT License.
 #
-# Lifecycle: stake → active → released | slashed
-# Bookkeeping reputation units (Portal points metaphor) — no native GL token transfer on Studionet.
+# Lifecycle: credit → stake → active → released | slashed
+# release: target or owner only (staker cannot unwind unilaterally).
+# slash: get_webpage(evidence_url) + prompt_comparative on {"breach": bool}.
+# Balances are bookkeeping units (Portal points metaphor) — no native GL transfer.
 
 MAX_ID_LEN = 64
 MAX_PURPOSE_LEN = 512
 MAX_REASON_LEN = 512
 MAX_STAKE_AMOUNT = 1_000_000_000
+PREVIEW_CHARS = 280
+HASH_ALGO = "sha256"
 
 STATUS_ACTIVE = "active"
 STATUS_RELEASED = "released"
 STATUS_SLASHED = "slashed"
 
 ADDR_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+HTTPS_URL_RE = re.compile(r"^https://[^\s<>\"']+$", re.IGNORECASE)
 
 
 def _normalize_id(stake_id: str) -> str:
@@ -61,6 +67,85 @@ def _sanitize_text(label: str, text: str, max_len: int) -> str:
     if len(cleaned) > max_len:
         raise Exception(f"{label} exceeds {max_len} chars")
     return cleaned
+
+
+def _require_https(url: str) -> str:
+    u = str(url).strip()
+    if not HTTPS_URL_RE.match(u):
+        raise Exception("evidence_url must be https:// with no whitespace")
+    if len(u) > 2048:
+        raise Exception("evidence_url exceeds 2048 chars")
+    return u
+
+
+def _hash_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _normalize(text: str) -> str:
+    return " ".join(str(text).split())
+
+
+def _capture_evidence(url: str) -> str:
+    entry = {
+        "url": url,
+        "content_hash": "",
+        "hash_algo": HASH_ALGO,
+        "preview": "",
+        "byte_len": 0,
+        "status": "error",
+    }
+    try:
+        raw = gl.get_webpage(url, mode="text")
+        if raw is None or str(raw).strip() == "":
+            raw = gl.get_webpage(url, mode="html")
+        normalized = _normalize(raw if raw is not None else "")
+        if normalized == "":
+            entry["status"] = "empty"
+        else:
+            entry["content_hash"] = _hash_text(normalized)
+            entry["preview"] = normalized[:PREVIEW_CHARS]
+            entry["byte_len"] = len(normalized)
+            entry["status"] = "ok"
+    except Exception as exc:
+        entry["preview"] = str(exc)[:120]
+        entry["status"] = "error"
+    return json.dumps(entry, sort_keys=True, separators=(",", ":"))
+
+
+def _judge_breach(purpose: str, reason: str, preview: str) -> str:
+    judge = (
+        "You are a GenLayer escrow arbiter.\n"
+        "Decide if the staker BREACHED the stated purpose given the slash reason "
+        "and evidence page preview.\n"
+        f"Purpose (what was promised):\n{purpose}\n"
+        f"Slash reason (claim):\n{reason}\n"
+        f"Evidence page preview:\n{preview}\n"
+        "PASS breach=true only if evidence + reason clearly show the purpose was "
+        "not fulfilled. If evidence is empty/irrelevant or claim is weak, breach=false.\n"
+        'Return JSON with exactly one field: {"breach": true} or {"breach": false}\n'
+        "No other keys."
+    )
+    try:
+        result = gl.nondet.exec_prompt(judge, response_format="json")
+    except Exception:
+        try:
+            result = gl.exec_prompt(judge)
+        except Exception:
+            return json.dumps({"breach": False}, sort_keys=True, separators=(",", ":"))
+
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except Exception:
+            result = {"breach": False}
+    if not isinstance(result, dict):
+        result = {"breach": False}
+    return json.dumps(
+        {"breach": bool(result.get("breach", False))},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class ReputationStake(gl.Contract):
@@ -145,6 +230,7 @@ class ReputationStake(gl.Contract):
 
     @gl.public.write
     def set_fee(self, receiver: str, amount: str) -> None:
+        """Bookkeeping fee hint per action (no native payout on Studionet)."""
         self._only_owner()
         self.fee_receiver = _require_address("receiver", receiver)
         amt = str(amount).strip()
@@ -155,7 +241,7 @@ class ReputationStake(gl.Contract):
 
     @gl.public.write
     def credit_reputation(self, user: str, amount: str) -> None:
-        """Owner bookkeeping mint for demos / steward bootstrap (not native GL transfer)."""
+        """Owner bookkeeping mint for demos / steward bootstrap (not native GL)."""
         self._only_owner()
         addr = _require_address("user", user)
         amt = _parse_amount(amount)
@@ -196,6 +282,9 @@ class ReputationStake(gl.Contract):
             "purpose": purpose_txt,
             "status": STATUS_ACTIVE,
             "reason": "",
+            "evidence_url": "",
+            "evidence_hash": "",
+            "breach": False,
         }
         self._save_stakes(stakes)
         order = self._load_order()
@@ -214,6 +303,7 @@ class ReputationStake(gl.Contract):
 
     @gl.public.write
     def release(self, stake_id: str) -> None:
+        """Target acknowledges success, or owner override. Staker cannot self-unwind."""
         sid = _normalize_id(stake_id)
         stakes = self._load_stakes()
         if sid not in stakes:
@@ -223,8 +313,8 @@ class ReputationStake(gl.Contract):
             raise Exception("stake is not active")
 
         caller = str(gl.message.sender_address)
-        if caller not in (entry["target"], entry["staker"], self.owner):
-            raise Exception("only target, staker, or owner may release")
+        if caller not in (entry["target"], self.owner):
+            raise Exception("only target or owner may release")
 
         amt = int(entry["amount"])
         balances = self._load_balances()
@@ -239,11 +329,22 @@ class ReputationStake(gl.Contract):
         self._save_stakes(stakes)
         self._append_event(
             "StakeReleased",
-            {"id": sid, "staker": entry["staker"], "amount": amt, "caller": caller},
+            {
+                "id": sid,
+                "staker": entry["staker"],
+                "amount": amt,
+                "caller": caller,
+                "fee_receiver": self.fee_receiver,
+                "fee_per_action": self.fee_per_action,
+            },
         )
 
     @gl.public.write
-    def slash(self, stake_id: str, reason: str) -> None:
+    def slash(self, stake_id: str, reason: str, evidence_url: str) -> None:
+        """Arbiter/owner: fetch evidence_url, LLM-judge breach, then transfer escrow.
+
+        Consensus: get_webpage under strict_eq, then prompt_comparative on breach bool only.
+        """
         self._only_arbiter()
         sid = _normalize_id(stake_id)
         stakes = self._load_stakes()
@@ -254,6 +355,49 @@ class ReputationStake(gl.Contract):
             raise Exception("stake is not active")
 
         reason_txt = _sanitize_text("reason", reason, MAX_REASON_LEN)
+        url = _require_https(evidence_url)
+
+        def fetch_fn() -> str:
+            return _capture_evidence(url)
+
+        snap_json = gl.eq_principle_strict_eq(fetch_fn)
+        snap = json.loads(snap_json)
+        if snap.get("status") != "ok":
+            raise Exception("evidence_url fetch failed or empty")
+
+        purpose = entry.get("purpose", "")
+        preview = snap.get("preview", "")
+
+        def leader_fn() -> str:
+            return _judge_breach(purpose, reason_txt, preview)
+
+        try:
+            verdict_json = gl.eq_principle.prompt_comparative(
+                leader_fn,
+                principle="boolean field breach must be identical across validators",
+            )
+        except Exception:
+            verdict_json = gl.eq_principle_strict_eq(leader_fn)
+
+        verdict = json.loads(verdict_json) if isinstance(verdict_json, str) else verdict_json
+        if not isinstance(verdict, dict):
+            verdict = {"breach": False}
+        breach = bool(verdict.get("breach", False))
+
+        self._append_event(
+            "SlashJudged",
+            {
+                "id": sid,
+                "breach": breach,
+                "evidence_url": url,
+                "evidence_hash": snap.get("content_hash", ""),
+                "caller": str(gl.message.sender_address),
+            },
+        )
+
+        if not breach:
+            raise Exception("validators did not find breach — slash aborted")
+
         amt = int(entry["amount"])
         balances = self._load_balances()
         staker_row = self._balance_of(balances, entry["staker"])
@@ -267,6 +411,9 @@ class ReputationStake(gl.Contract):
 
         entry["status"] = STATUS_SLASHED
         entry["reason"] = reason_txt
+        entry["evidence_url"] = url
+        entry["evidence_hash"] = snap.get("content_hash", "")
+        entry["breach"] = True
         stakes[sid] = entry
         self._save_stakes(stakes)
         self._append_event(
@@ -277,7 +424,10 @@ class ReputationStake(gl.Contract):
                 "target": entry["target"],
                 "amount": amt,
                 "reason": reason_txt,
+                "evidence_url": url,
                 "arbiter": str(gl.message.sender_address),
+                "fee_receiver": self.fee_receiver,
+                "fee_per_action": self.fee_per_action,
             },
         )
 
@@ -297,7 +447,8 @@ class ReputationStake(gl.Contract):
     def list_by_status(self, status: str) -> str:
         wanted = str(status).strip().lower()
         stakes = self._load_stakes()
-        ids = [sid for sid, s in stakes.items() if s.get("status") == wanted]
+        order = self._load_order()
+        ids = [sid for sid in order if sid in stakes and stakes[sid].get("status") == wanted]
         return json.dumps(ids, separators=(",", ":"))
 
     @gl.public.view

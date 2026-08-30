@@ -24,3 +24,8 @@ def test_normalize_id_ok():
 def test_require_address_invalid():
     with pytest.raises(Exception, match="0x address"):
         mod._require_address("user", "not-an-address")
+
+
+def test_judge_breach_parses():
+    out = mod._judge_breach("deliver course", "late", "no course found")
+    assert '"breach"' in out

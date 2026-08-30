@@ -16,20 +16,20 @@
 
 ## Overview
 
-**ReputationStake** is a GenLayer Intelligent Contract that escrowes on-chain reputation units (Portal points metaphor) between parties — stake → active → released | slashed.
+**ReputationStake v0.2** escrows bookkeeping reputation units between parties. Release is **target/owner only**. Slash is **consensus-gated**: `get_webpage(evidence_url)` + `prompt_comparative` on `{"breach": bool}`.
 
-| Step | Method | Who |
-|------|--------|-----|
-| Fund | `credit_reputation` | owner (demo bootstrap) |
-| Lock | `stake(amount, target, purpose)` | staker |
-| OK | `release(stake_id)` | target / staker / owner |
-| Breach | `slash(stake_id, reason)` | arbiter / owner |
-
-> Studionet v0.1 uses **bookkeeping balances** inside the IC — not native GL token transfers. Indexers can map units to Portal reputation later.
+| Step | Method | Who / consensus |
+|------|--------|-----------------|
+| Fund | `credit_reputation` | owner bootstrap |
+| Lock | `stake` | staker |
+| OK | `release` | target or owner |
+| Breach | `slash(…, evidence_url)` | arbiter + LLM/web consensus |
 
 ### Why GenLayer
 
-Reputation without escrow forces trust upfront. ReputationStake makes “I’ll put my points on the line” a consensus-visible contract primitive — useful for APIs, workers, courses, and partnerships where token transfers are overkill.
+Slash is not a free-text owner decree — validators fetch evidence and agree on boolean `breach` (same pattern as [PromptForge](https://github.com/valentinzubok/PromptForge) `passed`).
+
+> Studionet balances are in-contract bookkeeping (Portal points metaphor), not native GL transfers.
 
 ## Install
 
@@ -48,11 +48,7 @@ See [`docs/API.md`](docs/API.md).
 
 ## Demo
 
-```bash
-cd demo && python3 -m http.server 5175
-```
-
-Live: https://valentinzubok.github.io/ReputationStake/
+https://valentinzubok.github.io/ReputationStake/
 
 ## License
 

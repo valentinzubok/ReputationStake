@@ -1,58 +1,40 @@
-# ReputationStake API
+# ReputationStake API (v0.2)
 
 ## Write methods
 
 | Method | Inputs | Notes |
 |--------|--------|-------|
-| `credit_reputation(user, amount)` | 0x, int string | Owner bootstrap (bookkeeping units, not native GL transfer) |
-| `stake(amount, target, purpose)` | int string, 0x, string | Caller = staker; moves available → escrow |
-| `release(stake_id)` | id | Target, staker, or owner |
-| `slash(stake_id, reason)` | id, string | Arbiter or owner; escrow → target |
-| `set_arbiter(new_arbiter)` | 0x | Owner only |
-| `set_fee(receiver, amount)` | 0x, digit string | Owner only |
-| `transfer_ownership(new_owner)` | 0x | Owner only |
+| `credit_reputation(user, amount)` | 0x, int string | Owner bootstrap (bookkeeping units) |
+| `stake(amount, target, purpose)` | int string, 0x, string | Caller = staker |
+| `release(stake_id)` | id | **Target or owner only** (not staker) |
+| `slash(stake_id, reason, evidence_url)` | id, string, https URL | Arbiter/owner; `get_webpage` + LLM `breach` |
+| `set_arbiter` / `set_fee` / `transfer_ownership` | — | Owner only |
 
-## View methods
+## Consensus on slash
 
-| Method | Returns |
-|--------|---------|
-| `get_stake(stake_id)` | stake record JSON |
-| `list_ids` | all stake ids |
-| `list_by_status(status)` | `active` / `released` / `slashed` |
-| `get_balance(user)` | `{available, escrowed}` |
-| `get_events` | event log |
-| `get_owner` / `get_arbiter` / `get_fee` / `get_stats` | strings / JSON |
+1. `eq_principle_strict_eq` → `get_webpage(evidence_url)` digest + preview  
+2. `prompt_comparative` → `{"breach": bool}` only (PromptForge pattern)  
+3. If `breach=false` → revert `validators did not find breach`  
+4. If `breach=true` → escrow → target, status=`slashed`
 
 ## Lifecycle
 
-`Created (StakeCreated)` → `active` → `released` | `slashed`
-
-## Events
-
-`StakeCreated`, `StakeReleased`, `StakeSlashed`, `ReputationCredited`, `ArbiterUpdated`, `FeeUpdated`, `OwnershipTransferred`
-
-## Limits
-
-| Constant | Value |
-|----------|-------|
-| `MAX_STAKE_AMOUNT` | 1_000_000_000 |
-| `MAX_PURPOSE_LEN` | 512 |
-| `MAX_REASON_LEN` | 512 |
-| `MAX_ID_LEN` | 64 |
+`active` → `released` (target/owner) \| `slashed` (consensus breach)
 
 ## Example (Studio)
 
 ```text
 credit_reputation("0xStaker", "1000")
 stake("200", "0xTarget", "Paid API access for 30 days")
-release("stake-1")
-slash("stake-2", "SLA breach — no delivery")
+release("stake-1")   # from target
+# OR
+slash("stake-2", "SLA breach — no delivery", "https://example.com/proof")
 ```
 
 ## Errors
 
+- `only target or owner may release`
+- `validators did not find breach — slash aborted`
+- `evidence_url fetch failed or empty`
 - `insufficient reputation balance`
-- `cannot stake to yourself`
-- `stake is not active`
 - `only arbiter or owner`
-- `only target, staker, or owner may release`

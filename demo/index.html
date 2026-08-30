@@ -16,7 +16,7 @@
     @media (min-width: 860px) { .grid { grid-template-columns: 1fr 1fr; } }
     .card { background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 1rem; }
     label { display: block; margin-top: 0.55rem; font-size: 0.8rem; color: #a1a1aa; }
-    input, textarea { width: 100%; box-sizing: border-box; margin-top: 0.2rem; background: #09090b;
+    input { width: 100%; box-sizing: border-box; margin-top: 0.2rem; background: #09090b;
       border: 1px solid #3f3f46; border-radius: 8px; color: #fff; padding: 0.55rem; }
     button { margin: 0.35rem 0.35rem 0 0; background: #d97706; border: 0; color: #1c1917; font-weight: 700;
       padding: 0.5rem 0.8rem; border-radius: 8px; cursor: pointer; }
@@ -32,48 +32,57 @@
   <div id="root"></div>
   <script type="text/babel">
     const { useState } = React;
-    const KEY = "reputationstake-demo-v1";
-    const load = () => { try { return JSON.parse(localStorage.getItem(KEY)||"{}"); } catch { return {stakes:[],bal:1000}; } };
+    const KEY = "reputationstake-demo-v2";
+    const load = () => { try { return JSON.parse(localStorage.getItem(KEY)||"{}"); } catch { return {stakes:[],bal:1000,targetBal:0}; } };
     const save = (d) => localStorage.setItem(KEY, JSON.stringify(d));
 
     function App() {
       const [data, setData] = useState(load);
       const [amount, setAmount] = useState("200");
-      const [target, setTarget] = useState("0xTarget…");
+      const [target, setTarget] = useState("0x2222222222222222222222222222222222222222");
       const [purpose, setPurpose] = useState("API access guarantee");
+      const [evUrl, setEvUrl] = useState("https://test-server.genlayer.com/static/genvm/hello.html");
       const [studio, setStudio] = useState({});
-
-      const commit = (next) => { setData(next); save(next); };
       const stakes = data.stakes || [];
       const bal = data.bal ?? 1000;
+      const targetBal = data.targetBal ?? 0;
+      const commit = (next) => { setData(next); save(next); };
 
       const stake = () => {
         const amt = parseInt(amount, 10);
         if (!amt || amt > bal) return alert("insufficient balance");
         const id = `stake-${stakes.length + 1}`;
-        commit({ bal: bal - amt, stakes: [...stakes, { id, amount: amt, target, purpose, status: "active" }] });
+        commit({ ...data, bal: bal - amt, stakes: [...stakes, { id, amount: amt, target, purpose, status: "active" }] });
         setStudio({ method: "stake", args: [String(amt), target, purpose] });
       };
       const release = (id) => {
         const row = stakes.find(s => s.id === id);
         if (!row || row.status !== "active") return;
-        commit({ bal: bal + row.amount, stakes: stakes.map(s => s.id === id ? {...s, status: "released"} : s) });
+        // demo: act as target
+        commit({ ...data, bal: bal + row.amount, stakes: stakes.map(s => s.id === id ? {...s, status: "released"} : s) });
         setStudio({ method: "release", args: [id] });
       };
       const slash = (id) => {
-        commit({ stakes: stakes.map(s => s.id === id ? {...s, status: "slashed"} : s) });
-        setStudio({ method: "slash", args: [id, "SLA breach"] });
+        const row = stakes.find(s => s.id === id);
+        if (!row || row.status !== "active") return;
+        commit({
+          ...data,
+          targetBal: targetBal + row.amount,
+          stakes: stakes.map(s => s.id === id ? {...s, status: "slashed", evidence_url: evUrl} : s),
+        });
+        setStudio({ method: "slash", args: [id, "SLA breach", evUrl] });
       };
 
       return (
         <main>
-          <h1>ReputationStake — Stake → Release | Slash</h1>
-          <p className="hint">Local mock. Balance: <strong>{bal}</strong> rep units. <code>python3 -m http.server 5175</code></p>
+          <h1>ReputationStake v0.2 — Stake → Release | Slash</h1>
+          <p className="hint">Balance: <strong>{bal}</strong> · Target received: <strong>{targetBal}</strong>. Slash needs evidence_url (on-chain: get_webpage + breach LLM).</p>
           <div className="grid">
             <div className="card">
               <label>amount</label><input value={amount} onChange={e=>setAmount(e.target.value)} />
               <label>target (0x)</label><input value={target} onChange={e=>setTarget(e.target.value)} />
               <label>purpose</label><input value={purpose} onChange={e=>setPurpose(e.target.value)} />
+              <label>evidence_url (for slash)</label><input value={evUrl} onChange={e=>setEvUrl(e.target.value)} />
               <button onClick={stake}>stake</button>
             </div>
             <div className="card">
@@ -81,8 +90,10 @@
                 <tbody>{stakes.map(s => (
                   <tr key={s.id}><td>{s.id}</td><td>{s.amount}</td>
                     <td className={s.status==="active"?"act":s.status==="released"?"ok":"bad"}>{s.status}</td>
-                    <td>{s.status==="active" && <><button className="ghost" onClick={()=>release(s.id)}>release</button>
-                      <button className="ghost" onClick={()=>slash(s.id)}>slash</button></>}</td></tr>
+                    <td>{s.status==="active" && <>
+                      <button className="ghost" onClick={()=>release(s.id)}>release (as target)</button>
+                      <button className="ghost" onClick={()=>slash(s.id)}>slash</button>
+                    </>}</td></tr>
                 ))}</tbody></table>
             </div>
           </div>
