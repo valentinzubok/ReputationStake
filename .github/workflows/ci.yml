@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: pip install -r requirements-dev.txt
+      - name: Black check
+        run: black --check contracts tests
+      - name: Flake8
+        run: flake8 contracts tests --max-line-length=100 --ignore=E501,W503,E402,F403,F405
+      - name: Pytest + coverage
+        run: |
+          coverage run -m pytest -q
+          coverage report -m

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ReputationStake demo</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: #09090b; color: #e4e4e7; }
+    main { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+    h1 { color: #f59e0b; font-size: 1.35rem; }
+    .grid { display: grid; gap: 1rem; }
+    @media (min-width: 860px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .card { background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 1rem; }
+    label { display: block; margin-top: 0.55rem; font-size: 0.8rem; color: #a1a1aa; }
+    input, textarea { width: 100%; box-sizing: border-box; margin-top: 0.2rem; background: #09090b;
+      border: 1px solid #3f3f46; border-radius: 8px; color: #fff; padding: 0.55rem; }
+    button { margin: 0.35rem 0.35rem 0 0; background: #d97706; border: 0; color: #1c1917; font-weight: 700;
+      padding: 0.5rem 0.8rem; border-radius: 8px; cursor: pointer; }
+    button.ghost { background: transparent; border: 1px solid #3f3f46; color: #e4e4e7; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { border-bottom: 1px solid #27272a; padding: 0.45rem; text-align: left; }
+    .ok { color: #6ee7b7; } .bad { color: #fca5a5; } .act { color: #fde68a; }
+    .hint { color: #71717a; font-size: 0.8rem; }
+    pre { font-size: 0.7rem; overflow: auto; background: #09090b; padding: 0.75rem; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState } = React;
+    const KEY = "reputationstake-demo-v1";
+    const load = () => { try { return JSON.parse(localStorage.getItem(KEY)||"{}"); } catch { return {stakes:[],bal:1000}; } };
+    const save = (d) => localStorage.setItem(KEY, JSON.stringify(d));
+
+    function App() {
+      const [data, setData] = useState(load);
+      const [amount, setAmount] = useState("200");
+      const [target, setTarget] = useState("0xTarget…");
+      const [purpose, setPurpose] = useState("API access guarantee");
+      const [studio, setStudio] = useState({});
+
+      const commit = (next) => { setData(next); save(next); };
+      const stakes = data.stakes || [];
+      const bal = data.bal ?? 1000;
+
+      const stake = () => {
+        const amt = parseInt(amount, 10);
+        if (!amt || amt > bal) return alert("insufficient balance");
+        const id = `stake-${stakes.length + 1}`;
+        commit({ bal: bal - amt, stakes: [...stakes, { id, amount: amt, target, purpose, status: "active" }] });
+        setStudio({ method: "stake", args: [String(amt), target, purpose] });
+      };
+      const release = (id) => {
+        const row = stakes.find(s => s.id === id);
+        if (!row || row.status !== "active") return;
+        commit({ bal: bal + row.amount, stakes: stakes.map(s => s.id === id ? {...s, status: "released"} : s) });
+        setStudio({ method: "release", args: [id] });
+      };
+      const slash = (id) => {
+        commit({ stakes: stakes.map(s => s.id === id ? {...s, status: "slashed"} : s) });
+        setStudio({ method: "slash", args: [id, "SLA breach"] });
+      };
+
+      return (
+        <main>
+          <h1>ReputationStake — Stake → Release | Slash</h1>
+          <p className="hint">Local mock. Balance: <strong>{bal}</strong> rep units. <code>python3 -m http.server 5175</code></p>
+          <div className="grid">
+            <div className="card">
+              <label>amount</label><input value={amount} onChange={e=>setAmount(e.target.value)} />
+              <label>target (0x)</label><input value={target} onChange={e=>setTarget(e.target.value)} />
+              <label>purpose</label><input value={purpose} onChange={e=>setPurpose(e.target.value)} />
+              <button onClick={stake}>stake</button>
+            </div>
+            <div className="card">
+              <table><thead><tr><th>id</th><th>amt</th><th>status</th><th></th></tr></thead>
+                <tbody>{stakes.map(s => (
+                  <tr key={s.id}><td>{s.id}</td><td>{s.amount}</td>
+                    <td className={s.status==="active"?"act":s.status==="released"?"ok":"bad"}>{s.status}</td>
+                    <td>{s.status==="active" && <><button className="ghost" onClick={()=>release(s.id)}>release</button>
+                      <button className="ghost" onClick={()=>slash(s.id)}>slash</button></>}</td></tr>
+                ))}</tbody></table>
+            </div>
+          </div>
+          <div className="card" style={{marginTop:"1rem"}}><pre>{JSON.stringify(studio, null, 2)}</pre></div>
+        </main>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
