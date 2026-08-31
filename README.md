@@ -48,7 +48,14 @@ See [`docs/API.md`](docs/API.md).
 
 ## Demo
 
-https://valentinzubok.github.io/ReputationStake/
+- **Static flow mock:** https://valentinzubok.github.io/ReputationStake/
+- **Project app (Studionet):** `web/` — Next.js + MetaMask + genlayer-js
+
+```bash
+cd web && npm install && npm run dev   # http://localhost:3002
+```
+
+Deploy `web/` to Vercel for Portal **Projects** submission — see [`PROJECT_SUBMIT.md`](PROJECT_SUBMIT.md).
 
 ## License
 
