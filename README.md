@@ -49,7 +49,7 @@ See [`docs/API.md`](docs/API.md).
 ## Demo
 
 - **Static flow mock:** https://valentinzubok.github.io/ReputationStake/
-- **Project app (Studionet):** `web/` — Next.js + MetaMask + genlayer-js
+- **Project app (Studionet):** https://reputationstake-console.vercel.app (`web/` — Next.js + MetaMask + genlayer-js)
 
 ```bash
 cd web && npm install && npm run dev   # http://localhost:3002

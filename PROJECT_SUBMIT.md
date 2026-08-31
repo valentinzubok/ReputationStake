@@ -39,7 +39,7 @@ Use case: stake bookkeeping reputation units, release to staker (target/owner on
 
 Intelligent Contract (in-repo): contracts/ReputationStake.py
 Studionet: 0x638d2FA5c2eF973BE0bA348453F9F2281FE3F9ca
-App: web/ (Next.js) — LIVE_URL_AFTER_DEPLOY
+App: web/ (Next.js) — https://reputationstake-console.vercel.app
 GitHub: https://github.com/valentinzubok/ReputationStake
 
 Smoke txs (IC, already submitted separately):
@@ -50,6 +50,6 @@ slash 0x332b440cdeb6f949e0bdfbe61d1b93793bee10f61a0c8073518015cc14cf6498
 ## Evidence
 
 1. https://github.com/valentinzubok/ReputationStake
-2. LIVE_URL_AFTER_DEPLOY
+2. https://reputationstake-console.vercel.app
 3. https://github.com/valentinzubok/ReputationStake/blob/main/contracts/ReputationStake.py
 4. https://explorer-studio.genlayer.com/address/0x638d2FA5c2eF973BE0bA348453F9F2281FE3F9ca
