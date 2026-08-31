@@ -9,53 +9,73 @@
 </p>
 
 <p align="center">
+  <a href="https://reputationstake-console.vercel.app"><img src="https://img.shields.io/badge/Live-Console-d97706?style=flat-square" alt="Live console" /></a>
   <a href="https://github.com/valentinzubok/ReputationStake/actions/workflows/ci.yml"><img src="https://github.com/valentinzubok/ReputationStake/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT" /></a>
-  <a href="https://valentinzubok.github.io/ReputationStake/"><img src="https://img.shields.io/badge/demo-GitHub%20Pages-2dd4bf" alt="Demo" /></a>
 </p>
 
-## Overview
+---
 
-**ReputationStake v0.2** escrows bookkeeping reputation units between parties. Release is **target/owner only**. Slash is **consensus-gated**: `get_webpage(evidence_url)` + `prompt_comparative` on `{"breach": bool}`.
+## What it is
 
-| Step | Method | Who / consensus |
-|------|--------|-----------------|
-| Fund | `credit_reputation` | owner bootstrap |
-| Lock | `stake` | staker |
-| OK | `release` | target or owner |
-| Breach | `slash(…, evidence_url)` | arbiter + LLM/web consensus |
+**ReputationStake** is a GenLayer product for **reputation escrow** between parties: lock bookkeeping units, release on success, or slash with web evidence + LLM breach consensus.
 
-### Why GenLayer
+| Layer | What |
+|-------|------|
+| **Intelligent Contract** | [`contracts/ReputationStake.py`](contracts/ReputationStake.py) — escrow, `get_webpage` + `prompt_comparative` slash |
+| **Console (Project)** | [`web/`](web/) — Next.js dApp on Studionet via **genlayer-js** + MetaMask |
 
-Slash is not a free-text owner decree — validators fetch evidence and agree on boolean `breach` (same pattern as [PromptForge](https://github.com/valentinzubok/PromptForge) `passed`).
+**Live console:** https://reputationstake-console.vercel.app  
+**Studionet:** [`0x638d2FA5c2eF973BE0bA348453F9F2281FE3F9ca`](https://explorer-studio.genlayer.com/address/0x638d2FA5c2eF973BE0bA348453F9F2281FE3F9ca)
 
-> Studionet balances are in-contract bookkeeping (Portal points metaphor), not native GL transfers.
+Reads work **without wallet** — click **Refresh**. Writes need MetaMask; roles matter (owner / staker / target / arbiter).
 
-## Install
+> Static flow preview (localStorage mock): [GitHub Pages demo](https://valentinzubok.github.io/ReputationStake/) — not on-chain.
+
+---
+
+## Features
+
+- **Owner bootstrap** — `credit_reputation` (console panel when owner wallet connected)
+- **Stake / release** — target or owner releases; staker cannot self-unwind
+- **Consensus slash** — arbiter + `evidence_url` + LLM `breach: bool`
+- **Method map** — [`contracts/README.md`](contracts/README.md) ↔ [`web/src/lib/contracts.ts`](web/src/lib/contracts.ts)
+
+---
+
+## Quick start (console)
 
 ```bash
 git clone https://github.com/valentinzubok/ReputationStake.git
-cd ReputationStake
+cd ReputationStake/web
+npm install
+npm run dev   # http://localhost:3002
+```
+
+1. **Refresh** — see `stake-1` / `stake-2` from smoke
+2. Connect **owner** wallet for `credit_reputation` + `slash`
+3. Connect **staker** wallet for `stake`
+
+Contract tests:
+
+```bash
+cd ..
 pip install -r requirements-dev.txt
 coverage run -m pytest -q && coverage report -m
 ```
 
-Studio: paste [`contracts/ReputationStake.py`](contracts/ReputationStake.py).
+---
+
+## Portal
+
+- **Intelligent Contracts** — see [`SUBMIT.md`](SUBMIT.md)
+- **Projects** — see [`PROJECT_SUBMIT.md`](PROJECT_SUBMIT.md)
+
+Screenshot for stewards: [`docs/console-screenshot.png`](docs/console-screenshot.png)
 
 ## API
 
 See [`docs/API.md`](docs/API.md).
-
-## Demo
-
-- **Static flow mock:** https://valentinzubok.github.io/ReputationStake/
-- **Project app (Studionet):** https://reputationstake-console.vercel.app (`web/` — Next.js + MetaMask + genlayer-js)
-
-```bash
-cd web && npm install && npm run dev   # http://localhost:3002
-```
-
-Deploy `web/` to Vercel for Portal **Projects** submission — see [`PROJECT_SUBMIT.md`](PROJECT_SUBMIT.md).
 
 ## License
 

@@ -49,6 +49,26 @@ export async function getStats(): Promise<Stats | null> {
   return parseJson<Stats | null>(raw, null);
 }
 
+export async function getOwner(): Promise<string> {
+  return readContract<string>(CONTRACT_ADDRESS, "get_owner", []);
+}
+
+export async function getArbiter(): Promise<string> {
+  return readContract<string>(CONTRACT_ADDRESS, "get_arbiter", []);
+}
+
+export async function creditReputation(
+  account: Address,
+  provider: unknown,
+  user: string,
+  amount: string,
+): Promise<string> {
+  return writeAndWait(account, provider, CONTRACT_ADDRESS, "credit_reputation", [
+    user,
+    amount,
+  ]);
+}
+
 export async function stake(
   account: Address,
   provider: unknown,

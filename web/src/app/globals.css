@@ -44,6 +44,11 @@ h2 {
   font-size: 0.85rem;
 }
 
+.okmsg {
+  color: #6ee7b7;
+  font-size: 0.85rem;
+}
+
 .tx {
   color: #6ee7b7;
   font-size: 0.75rem;
@@ -152,4 +157,19 @@ td {
 .mono {
   font-family: ui-monospace, monospace;
   font-size: 0.75rem;
+}
+
+.footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #27272a;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+
+.roles ul {
+  margin: 0;
+  padding-left: 1.1rem;
 }
