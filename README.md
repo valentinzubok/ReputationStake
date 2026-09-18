@@ -24,6 +24,7 @@
 |-------|------|
 | **Intelligent Contract** | [`contracts/ReputationStake.py`](contracts/ReputationStake.py) — escrow, `get_webpage` + `prompt_comparative` slash |
 | **Console (Project)** | [`web/`](web/) — Next.js dApp on Studionet via **genlayer-js** + MetaMask |
+| **EVM contracts** | [`evm/`](evm/) — Solidity `ReputationStake` + `MetaEvidence`: ERC-20 (GEN) stakes, `conditionMet` rewards, reason-tagged slashing |
 
 **Live console:** https://reputationstake-console.vercel.app  
 **Studionet:** [`0x638d2FA5c2eF973BE0bA348453F9F2281FE3F9ca`](https://explorer-studio.genlayer.com/address/0x638d2FA5c2eF973BE0bA348453F9F2281FE3F9ca)
