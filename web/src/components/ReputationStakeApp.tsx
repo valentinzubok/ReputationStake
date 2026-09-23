@@ -1,70 +1,122 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_TARGET, DEMO_URL, EXPLORER, GITHUB } from "@/lib/config";
+import {
+  CHAIN_ID,
+  CONTRACT_ADDRESS,
+  CONTRACT_REPO,
+  DEFAULT_PURPOSE,
+  EVIDENCE_EXAMPLES,
+  EXPLORER,
+  GITHUB,
+  txUrl,
+} from "@/lib/config";
 import {
   creditReputation,
   getArbiter,
   getBalance,
+  getEvents,
   getOwner,
   getStake,
   getStats,
   listIds,
-  releaseStake,
-  slashStake,
+  release,
+  slash,
   stake,
+  type Balance,
+  type EventRow,
   type StakeRow,
+  type Stats,
 } from "@/lib/contracts";
+import { fundWithTestGen, getNativeBalance } from "@/lib/genlayer";
 import { useWallet } from "./WalletProvider";
 
-function sameAddr(a?: string | null, b?: string | null) {
-  return Boolean(a && b && a.toLowerCase() === b.toLowerCase());
+const short = (h: string, n = 10) => (h ? `${h.slice(0, n)}…${h.slice(-4)}` : "—");
+const shortHash = (h: string) => (h ? `${h.slice(0, 16)}…` : "—");
+
+/** The slash the network refused: evidence did not support the claim, so the call reverted. */
+const REJECTED_SLASH_TX =
+  "0xe0353c6a01b204dcfd4de92d0006417d49eea39b7966ef8153d04ac06c8fe46e";
+
+const EVENT_TONE: Record<string, string> = {
+  StakeCreated: "",
+  StakeReleased: "released",
+  StakeSlashed: "slashed",
+  SlashRejected: "slashed",
+  ReputationCredited: "",
+};
+
+/** Hero illustration: escrow on the beam, validators deciding which pan it falls into. */
+function Scales() {
+  return (
+    <div className="scales" aria-hidden="true">
+      <div className="beam" />
+      <div className="pans">
+        <div className="pan keep">
+          no breach
+          <b>escrow returns</b>
+        </div>
+        <div className="pan slash">
+          breach
+          <b>escrow slashed</b>
+        </div>
+      </div>
+      <div className="evidence">
+        <span className="seal">sha-256 frozen</span>
+        validators read the same evidence, then agree on one boolean
+      </div>
+    </div>
+  );
 }
 
 export function ReputationStakeApp() {
-  const { address, provider, ready, error, connect } = useWallet();
+  const { address, provider, connect, error: walletError } = useWallet();
   const [rows, setRows] = useState<StakeRow[]>([]);
-  const [balance, setBalance] = useState("");
-  const [stats, setStats] = useState("");
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [owner, setOwner] = useState("");
   const [arbiter, setArbiter] = useState("");
+  const [balance, setBalance] = useState<Balance | null>(null);
+  const [gen, setGen] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
-  const [tx, setTx] = useState("");
   const [msg, setMsg] = useState("");
+  const [ok, setOk] = useState(false);
+  const [tx, setTx] = useState("");
 
   const [amount, setAmount] = useState("100");
-  const [target, setTarget] = useState(DEFAULT_TARGET);
-  const [purpose, setPurpose] = useState("API access guarantee");
-  const [creditUser, setCreditUser] = useState("");
-  const [creditAmount, setCreditAmount] = useState("500");
-  const [reason, setReason] = useState(
-    "Endpoint returns only Hello world string with no service functionality — SLA fully breached",
-  );
-  const [evidenceUrl, setEvidenceUrl] = useState(DEMO_URL);
+  const [target, setTarget] = useState("");
+  const [purpose, setPurpose] = useState(DEFAULT_PURPOSE);
 
-  const isOwner = sameAddr(address, owner);
-  const isArbiter = sameAddr(address, arbiter) || isOwner;
+  const [slashId, setSlashId] = useState("");
+  const [reason, setReason] = useState("the published page is not the agreed page");
+  const [evidence, setEvidence] = useState(EVIDENCE_EXAMPLES[1].url);
+
+  const [releaseId, setReleaseId] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    setMsg("");
     try {
-      const [list, o, a] = await Promise.all([listIds(), getOwner(), getArbiter()]);
+      const [ids, o, a, s, ev] = await Promise.all([
+        listIds(),
+        getOwner(),
+        getArbiter(),
+        getStats(),
+        getEvents(),
+      ]);
       setOwner(o);
       setArbiter(a);
-      const loaded = await Promise.all(list.map((id) => getStake(id)));
-      setRows(loaded.filter(Boolean) as StakeRow[]);
+      setStats(s);
+      setEvents(ev.slice(-8).reverse());
+      const loaded = await Promise.all(ids.map((id) => getStake(id)));
+      setRows((loaded.filter(Boolean) as StakeRow[]).reverse());
       if (address) {
-        const bal = await getBalance(address);
-        setBalance(bal ? JSON.stringify(bal) : "");
-      } else {
-        setBalance("");
+        setGen(await getNativeBalance(address));
+        setBalance(await getBalance(address));
       }
-      const s = await getStats();
-      setStats(s ? JSON.stringify(s) : "");
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Studionet read failed");
+      setMsg(`Error: ${e instanceof Error ? e.message : "read failed"}`);
+      setOk(false);
     } finally {
       setLoading(false);
     }
@@ -74,201 +126,324 @@ export function ReputationStakeApp() {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    if (address && !creditUser) setCreditUser(address);
-  }, [address, creditUser]);
-
-  const run = async (label: string, fn: () => Promise<string>) => {
+  const run = async (name: string, fn: () => Promise<string | void>) => {
     if (!address || !provider) {
-      setMsg("Connect MetaMask for write transactions");
+      setMsg("Connect MetaMask for writes");
+      setOk(false);
       return;
     }
-    setBusy(label);
+    setBusy(name);
     setMsg("");
-    setTx("");
     try {
       const hash = await fn();
-      setTx(hash);
-      setMsg(`${label} submitted (ACCEPTED) — data refreshed`);
+      if (hash) setTx(hash);
       await refresh();
+      // Set the message after refresh: refresh() clears state while it reloads.
+      setMsg(`${name} OK`);
+      setOk(true);
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : String(e));
+      setMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      setOk(false);
     } finally {
       setBusy("");
     }
   };
 
+  const acct = address as `0x${string}`;
+  const disabled = !!busy || !address;
+  const isArbiter = !!address && arbiter.toLowerCase() === address.toLowerCase();
+  const isOwner = !!address && owner.toLowerCase() === address.toLowerCase();
+
   return (
     <main className="wrap">
-      <header>
-        <h1>ReputationStake Console</h1>
-        <p className="muted">
-          Reputation escrow on Studionet — stake, release (target/owner), slash with evidence
-          (arbiter/owner + LLM breach). Reads work without wallet (click Refresh).
-        </p>
-        <div className="row">
-          {address ? (
-            <span className="pill ok">
-              {address.slice(0, 6)}…{address.slice(-4)}
-              {isOwner ? " · owner" : ""}
-              {isArbiter && !isOwner ? " · arbiter" : ""}
-            </span>
-          ) : (
-            <button type="button" onClick={() => void connect()}>
-              Connect MetaMask
-            </button>
-          )}
-          <button type="button" className="ghost" onClick={() => void refresh()} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
-        </div>
-        {error && <p className="msg">{error}</p>}
-        {msg && <p className={msg.includes("failed") ? "msg" : "okmsg"}>{msg}</p>}
-        {tx && <p className="tx">tx: {tx}</p>}
-        {balance && <p className="muted">your balance: {balance}</p>}
-        {stats && <p className="muted">on-chain stats: {stats}</p>}
-      </header>
-
-      <section className="card roles">
-        <h2>Roles</h2>
-        <ul className="muted">
-          <li>
-            <strong>Owner</strong> ({owner ? `${owner.slice(0, 10)}…` : "…"}): credit_reputation,
-            release override, set arbiter
-          </li>
-          <li>
-            <strong>Staker</strong>: stake (needs available balance from credit)
-          </li>
-          <li>
-            <strong>Target</strong>: release active stake on success
-          </li>
-          <li>
-            <strong>Arbiter</strong> ({arbiter ? `${arbiter.slice(0, 10)}…` : "…"}): slash with
-            evidence_url — LLM must agree breach=true
-          </li>
-        </ul>
-      </section>
-
-      {isOwner && (
-        <section className="card">
-          <h2>Owner — credit reputation</h2>
-          <p className="muted">Bootstrap bookkeeping balance before stake (not native GL).</p>
-          <label>user address</label>
-          <input value={creditUser} onChange={(e) => setCreditUser(e.target.value)} />
-          <label>amount</label>
-          <input value={creditAmount} onChange={(e) => setCreditAmount(e.target.value)} />
-          <button
-            type="button"
-            disabled={!ready || !!busy}
-            onClick={() =>
-              void run("credit_reputation", () =>
-                creditReputation(address!, provider, creditUser, creditAmount),
-              )
-            }
-          >
-            credit_reputation
-          </button>
-        </section>
-      )}
-
-      <section className="grid">
-        <div className="card">
-          <h2>New stake</h2>
-          <p className="muted">Staker wallet. Cannot stake to yourself.</p>
-          <label>amount</label>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <label>target</label>
-          <input value={target} onChange={(e) => setTarget(e.target.value)} />
-          <label>purpose</label>
-          <input value={purpose} onChange={(e) => setPurpose(e.target.value)} />
-          <button
-            type="button"
-            disabled={!ready || !!busy}
-            onClick={() =>
-              void run("stake", () => stake(address!, provider, amount, target, purpose))
-            }
-          >
-            stake
-          </button>
-        </div>
-
-        <div className="card">
-          <h2>Slash setup (arbiter/owner)</h2>
-          <label>reason</label>
-          <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
-          <label>evidence_url</label>
-          <input value={evidenceUrl} onChange={(e) => setEvidenceUrl(e.target.value)} />
-          <p className="muted">
-            Use slash on an active stake below. Weak reasons may yield breach=false (tx ERROR).
+      <section className="hero">
+        <div>
+          <h1>
+            Reputation<span className="accent">Stake</span>
+          </h1>
+          <p className="lede">
+            Escrow reputation against a promise. The counterparty cannot take it and the arbiter
+            cannot take it either: a slash only goes through when GenLayer validators, reading the
+            same frozen evidence, <strong>agree the obligation was breached</strong>. When they do
+            not, the transaction reverts and the escrow stays put.
           </p>
+          <div className="chips">
+            <span className="chip">
+              chain <b>{CHAIN_ID}</b>
+            </span>
+            {stats && (
+              <>
+                <span className="chip">
+                  stakes <b>{stats.total}</b>
+                </span>
+                <span className="chip">
+                  active <b>{stats.active}</b>
+                </span>
+                <span className="chip">
+                  released <b>{stats.released}</b>
+                </span>
+                <span className="chip hot">
+                  slashed <b>{stats.slashed}</b>
+                </span>
+                <span className="chip">
+                  escrowed <b>{stats.total_escrowed}</b>
+                </span>
+              </>
+            )}
+          </div>
+          <p className="muted" style={{ marginTop: "0.8rem" }}>
+            Contract <a href={EXPLORER}>{short(CONTRACT_ADDRESS, 12)}</a> · owner{" "}
+            <code>{short(owner)}</code> · arbiter <code>{short(arbiter)}</code> ·{" "}
+            <a href={CONTRACT_REPO}>contract source</a> · <a href={GITHUB}>this console</a>
+          </p>
+          <div>
+            {!address ? (
+              <button onClick={() => void connect()}>Connect MetaMask</button>
+            ) : (
+              <span className="pill">
+                <span className="dot" /> {short(address)} · {gen || "?"} GEN
+                {balance ? ` · ${balance.available} free / ${balance.escrowed} escrowed` : ""}
+              </span>
+            )}
+            {address && (
+              <button
+                className="ghost"
+                style={{ marginLeft: "0.5rem" }}
+                disabled={!!busy}
+                onClick={() =>
+                  void run("Get test GEN", async () => {
+                    await fundWithTestGen(acct);
+                  })
+                }
+              >
+                Get test GEN
+              </button>
+            )}
+          </div>
+          {walletError && <p className="msg">{walletError}</p>}
+          {msg && <p className={ok ? "okmsg" : "msg"}>{msg}</p>}
+          {tx && (
+            <p className="tx muted">
+              last tx <a href={txUrl(tx)}>{tx}</a>
+            </p>
+          )}
         </div>
+        <Scales />
       </section>
 
-      <section className="card">
-        <h2>Stakes ({loading ? "…" : rows.length})</h2>
-        {loading && <p className="muted">Loading from Studionet…</p>}
-        <table>
-          <thead>
-            <tr>
-              <th>id</th>
-              <th>amount</th>
-              <th>status</th>
-              <th>actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.stake_id}>
-                <td>{r.stake_id}</td>
-                <td>{r.amount}</td>
-                <td className={r.status === "slashed" ? "bad" : r.status === "released" ? "ok" : ""}>
-                  {r.status}
-                  {r.breach ? " (breach)" : ""}
-                </td>
-                <td className="row">
-                  {r.status === "active" && (
-                    <>
-                      <button
-                        type="button"
-                        disabled={!ready || !!busy}
-                        title="Target or owner wallet"
-                        onClick={() =>
-                          void run("release", () => releaseStake(address!, provider, r.stake_id))
-                        }
-                      >
-                        release
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!ready || !!busy || !isArbiter}
-                        title={isArbiter ? "Arbiter/owner" : "Connect arbiter or owner wallet"}
-                        onClick={() =>
-                          void run("slash", () =>
-                            slashStake(address!, provider, r.stake_id, reason, evidenceUrl),
-                          )
-                        }
-                      >
-                        slash
-                      </button>
-                    </>
-                  )}
-                </td>
-              </tr>
+      <div className="row">
+        <section className="card">
+          <h2>1 · Stake against a promise</h2>
+          <p className="muted">
+            Locks your reputation units in escrow and names the obligation the validators will
+            judge later. You cannot stake to yourself.
+          </p>
+          <label htmlFor="amount">Amount (units)</label>
+          <input
+            id="amount"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            inputMode="numeric"
+          />
+          <label htmlFor="target">Target address</label>
+          <input
+            id="target"
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            placeholder="0x…"
+          />
+          <label htmlFor="purpose">Purpose (the obligation)</label>
+          <textarea
+            id="purpose"
+            rows={3}
+            value={purpose}
+            onChange={(e) => setPurpose(e.target.value)}
+          />
+          <button
+            disabled={disabled || !target}
+            onClick={() => void run("stake", () => stake(acct, provider, amount, target, purpose))}
+          >
+            {busy === "stake" ? (
+              <span className="working">
+                <span className="spinner" /> staking…
+              </span>
+            ) : (
+              "stake → escrow"
+            )}
+          </button>
+          {balance && balance.available === 0 && (
+            <p className="muted">
+              Your balance is 0. The owner bootstraps units with <code>credit_reputation</code>.
+            </p>
+          )}
+        </section>
+
+        <section className="card">
+          <h2>2 · Release it</h2>
+          <p className="muted">
+            The target (or the owner) confirms the obligation was met and the units go back to the
+            staker. The staker cannot unwind their own stake.
+          </p>
+          <label htmlFor="releaseId">Stake id</label>
+          <input
+            id="releaseId"
+            value={releaseId}
+            onChange={(e) => setReleaseId(e.target.value)}
+            placeholder="stake-1"
+          />
+          <button
+            disabled={disabled || !releaseId}
+            onClick={() => void run("release", () => release(acct, provider, releaseId))}
+          >
+            {busy === "release" ? (
+              <span className="working">
+                <span className="spinner" /> releasing…
+              </span>
+            ) : (
+              "release escrow"
+            )}
+          </button>
+          {isOwner && (
+            <>
+              <label htmlFor="creditTo">Owner: credit reputation to</label>
+              <input
+                id="creditTo"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                placeholder="0x…"
+              />
+              <button
+                className="ghost"
+                disabled={disabled || !target}
+                onClick={() =>
+                  void run("credit_reputation", () =>
+                    creditReputation(acct, provider, target, amount),
+                  )
+                }
+              >
+                credit {amount} units
+              </button>
+            </>
+          )}
+        </section>
+
+        <section className="card">
+          <h2>3 · Ask for a slash</h2>
+          <p className="muted">
+            Arbiter only. Validators fetch the evidence URL and agree on its SHA-256 and text, then
+            judge that frozen text against the obligation. A slash the network does not support
+            aborts the whole transaction.
+          </p>
+          <label htmlFor="slashId">Stake id</label>
+          <input
+            id="slashId"
+            value={slashId}
+            onChange={(e) => setSlashId(e.target.value)}
+            placeholder="stake-1"
+          />
+          <label htmlFor="reason">Claimed breach</label>
+          <textarea
+            id="reason"
+            rows={2}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <label htmlFor="evidence">Evidence URL (https)</label>
+          <input id="evidence" value={evidence} onChange={(e) => setEvidence(e.target.value)} />
+          <p className="muted">
+            Try both:{" "}
+            {EVIDENCE_EXAMPLES.map((ex) => (
+              <button
+                key={ex.url}
+                className="ghost"
+                style={{ marginRight: "0.35rem", fontSize: "0.72rem" }}
+                onClick={() => setEvidence(ex.url)}
+              >
+                {ex.label}
+              </button>
             ))}
-          </tbody>
-        </table>
+          </p>
+          <button
+            disabled={disabled || !slashId || !isArbiter}
+            onClick={() =>
+              void run("slash", () => slash(acct, provider, slashId, reason, evidence))
+            }
+          >
+            {busy === "slash" ? (
+              <span className="working">
+                <span className="spinner" /> asking validators…
+              </span>
+            ) : (
+              "slash → ask the network"
+            )}
+          </button>
+          {address && !isArbiter && (
+            <p className="muted">
+              Connected wallet is not the arbiter (<code>{short(arbiter)}</code>), so this call will
+              be rejected on chain.
+            </p>
+          )}
+          <p className="muted">
+            A rejected slash leaves no state behind, so it never shows in the lists below — the
+            proof is the transaction itself:{" "}
+            <a href={txUrl(REJECTED_SLASH_TX)}>{shortHash(REJECTED_SLASH_TX)}</a> tried to slash
+            stake-1 with the hello page as evidence and the validators found no breach.
+          </p>
+        </section>
+      </div>
+
+      <section style={{ marginTop: "2rem" }}>
+        <h2>Stakes on chain {loading && <span className="spinner" />}</h2>
+        {rows.length === 0 && !loading && <p className="muted">No stakes yet.</p>}
+        {rows.map((r) => (
+          <article key={r.stake_id} className={`card stake ${r.status}`}>
+            <div className="head">
+              <span className="id">{r.stake_id}</span>
+              <span className={`status ${r.status}`}>{r.status}</span>
+              <span className="amount">{r.amount}</span>
+            </div>
+            <p className="purpose">{r.purpose}</p>
+            <p className="hashline">
+              staker <code>{short(r.staker)}</code> → target <code>{short(r.target)}</code>
+            </p>
+            {r.status === "slashed" && (
+              <div className="verdictbox">
+                <strong>breach agreed by validators.</strong> Claim: {r.reason}
+                <div className="hashline">
+                  evidence <a href={r.evidence_url}>{r.evidence_url}</a> · sha-256{" "}
+                  <code>{shortHash(r.evidence_hash)}</code>
+                </div>
+              </div>
+            )}
+          </article>
+        ))}
       </section>
 
-      <footer className="footer">
-        <a href={GITHUB} target="_blank" rel="noreferrer">
-          GitHub
-        </a>
-        <a href={EXPLORER} target="_blank" rel="noreferrer">
-          Studionet contract
-        </a>
-        <span className="muted">
-          IC source: contracts/ReputationStake.py · bindings: web/src/lib/contracts.ts
-        </span>
+      <section style={{ marginTop: "2rem" }}>
+        <h2>Recent events</h2>
+        {events.length === 0 ? (
+          <p className="muted">No events yet.</p>
+        ) : (
+          <ul className="timeline">
+            {events.map((e, i) => (
+              <li key={i} className={EVENT_TONE[String(e.kind)] || ""}>
+                <strong>{String(e.kind)}</strong>{" "}
+                <span className="muted">
+                  {[e.id, e.amount, e.staker ? short(String(e.staker)) : null]
+                    .filter(Boolean)
+                    .map(String)
+                    .join(" · ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <footer className="foot">
+        ReputationStake on GenLayer Studio Dev (chain {CHAIN_ID}). Reads work without a wallet;
+        writes need MetaMask and test GEN for fees. Contract source and the deployment record live
+        in <a href={CONTRACT_REPO}>ReputationStakeCore</a>.
       </footer>
     </main>
   );
