@@ -23,3 +23,5 @@ jobs:
         run: |
           coverage run -m pytest -q
           coverage report -m
+      - name: Deployed code equals this source
+        run: python3 scripts/verify_deployment.py

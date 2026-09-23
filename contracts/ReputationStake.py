@@ -1,6 +1,7 @@
-# { "Depends": "py-genlayer:15qfivjvy80800rh998pcxmd2m8va1wq2qzqhz850n8ggcr4i9q0" }
+# v0.3.0
+# { "Depends": "py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng" }
 
-from genlayer import *
+import genlayer as gl
 import hashlib
 import json
 import re
@@ -96,9 +97,9 @@ def _capture_evidence(url: str) -> str:
         "status": "error",
     }
     try:
-        raw = gl.get_webpage(url, mode="text")
+        raw = gl.nondet.web.render(url, mode="text")
         if raw is None or str(raw).strip() == "":
-            raw = gl.get_webpage(url, mode="html")
+            raw = gl.nondet.web.render(url, mode="html")
         normalized = _normalize(raw if raw is not None else "")
         if normalized == "":
             entry["status"] = "empty"
@@ -130,7 +131,7 @@ def _judge_breach(purpose: str, reason: str, preview: str) -> str:
         result = gl.nondet.exec_prompt(judge, response_format="json")
     except Exception:
         try:
-            result = gl.exec_prompt(judge)
+            result = gl.nondet.exec_prompt(judge)
         except Exception:
             return json.dumps({"breach": False}, sort_keys=True, separators=(",", ":"))
 
@@ -148,7 +149,7 @@ def _judge_breach(purpose: str, reason: str, preview: str) -> str:
     )
 
 
-class ReputationStake(gl.Contract):
+class ReputationStake(gl.contract.Contract):
     owner: str
     arbiter: str
     fee_receiver: str
@@ -360,7 +361,7 @@ class ReputationStake(gl.Contract):
         def fetch_fn() -> str:
             return _capture_evidence(url)
 
-        snap_json = gl.eq_principle_strict_eq(fetch_fn)
+        snap_json = gl.eq_principle.strict_eq(fetch_fn)
         snap = json.loads(snap_json)
         if snap.get("status") != "ok":
             raise Exception("evidence_url fetch failed or empty")
@@ -377,7 +378,7 @@ class ReputationStake(gl.Contract):
                 principle="boolean field breach must be identical across validators",
             )
         except Exception:
-            verdict_json = gl.eq_principle_strict_eq(leader_fn)
+            verdict_json = gl.eq_principle.strict_eq(leader_fn)
 
         verdict = json.loads(verdict_json) if isinstance(verdict_json, str) else verdict_json
         if not isinstance(verdict, dict):
