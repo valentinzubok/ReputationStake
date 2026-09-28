@@ -29,14 +29,20 @@ when GenLayer validators, each reading the *same frozen* evidence, independently
 obligation was breached.
 
 ```
-stake(amount, target, purpose)         staker escrows units against a named obligation
-release(stake_id)                      target (or owner): obligation met, units return
-slash(stake_id, reason, evidence_url)  the arbiter asks the network, it does not decide alone:
-      1. validators fetch evidence_url and agree on its SHA-256 + text (eq_principle.strict_eq)
-      2. their LLMs read that FROZEN text against `purpose` and `reason`
-         and agree on one boolean `breach` (prompt_comparative)
-      3. breach == true  → escrow moves to the target, verdict + evidence hash stored
-         breach == false → the whole transaction aborts, escrow untouched
+stake(amount, target, purpose, policy)   staker escrows units against a named obligation
+                                         AND fixes the https sources a slash may cite
+release(stake_id)                        target (or owner): obligation met, units return
+slash(stake_id, reason, evidence_url)    the arbiter asks the network and cannot steer it:
+      1. evidence_url must satisfy the evidence_policy agreed at stake time — exact
+         origin, path prefix on a boundary, no dot segments. Otherwise it reverts here,
+         before a single model runs.
+      2. validators fetch the page and agree on the SHA-256 of the WHOLE normalized
+         document plus a bounded deterministic digest of it (eq_principle.strict_eq)
+      3. their LLMs judge that digest, with obligation, claim and page text quoted as
+         untrusted data, and must answer with a literal JSON boolean
+         (eq_principle.prompt_comparative — no fallback to another strategy)
+      4. breach == true  → escrow moves to the target, verdict + document hash stored
+         anything else   → the whole transaction reverts and the escrow does not move
 ```
 
 The last line is the product: **an arbiter cannot slash on assertion alone.**
@@ -47,8 +53,8 @@ The last line is the product: **an arbiter cannot slash on assertion alone.**
 |---|---|
 | Console | **https://valentinzubok.github.io/ReputationStake/** (reads work with no wallet) |
 | Network | GenLayer Studio Dev / Studio Next — chain `61997` |
-| Contract | [`0x795b7661E10dF78BEd921dB7986C05b115614015`](https://explorer-studio-dev.genlayer.com/address/0x795b7661E10dF78BEd921dB7986C05b115614015) |
-| Source sha256 | `8945223c774a1837942948ceecb625f8ded16b478585d1eb8732d14c112bf858` — equals [`contracts/ReputationStake.py`](contracts/ReputationStake.py) |
+| Contract | [`0x1E075794c6404F8f5b9ef87aE29Cf77071Cec86f`](https://explorer-studio-dev.genlayer.com/address/0x1E075794c6404F8f5b9ef87aE29Cf77071Cec86f) |
+| Source sha256 | `e38ca5472ab97da4c02850f80aa3331794b7b809ead4e5bd91ee2e8ea1772d18` — equals [`contracts/ReputationStake.py`](contracts/ReputationStake.py) |
 | Deploy record | [`STUDIO_DEV_DEPLOY.md`](STUDIO_DEV_DEPLOY.md) — every lifecycle transaction |
 | Contract-only repo | [ReputationStakeCore](https://github.com/valentinzubok/ReputationStakeCore) |
 
@@ -57,28 +63,42 @@ matching the contract in this repository.
 
 ### What is on chain right now
 
-`get_stats` → `{"total":3,"active":1,"released":1,"slashed":1,"total_escrowed":200}`
+`get_stats` → `{"total":3,"active":1,"released":1,"slashed":1,"total_escrowed":300}`
 
-- `stake-1` — **active**, 200 escrowed. An arbiter tried to slash it with the hello page as
-  evidence; the validators found no breach and the transaction
-  [reverted](https://explorer-studio-dev.genlayer.com/tx/0xe0353c6a01b204dcfd4de92d0006417d49eea39b7966ef8153d04ac06c8fe46e).
-- `stake-2` — **released** by the target.
-- `stake-3` — **slashed**: evidence `https://example.com/` did not contain the promised text,
-  validators agreed `breach: true`, the escrow moved and the evidence hash `8c1e8564…` is stored
-  with the verdict.
+- `stake-1` — **active**, 300 escrowed, after **two** refused slashes:
+  [`0xb0422555…`](https://explorer-studio-dev.genlayer.com/tx/0xb0422555adcce9a68cb300d91f923b30997be8089dcefbdd9c34df8a4de44a12)
+  cited `https://example.com/`, which is outside the policy this stake was created with, and was
+  rejected before any model ran; [`0x16441e99…`](https://explorer-studio-dev.genlayer.com/tx/0x16441e992916cd209f2fd07c574c1a5a1b1a3f6d2ef3c0561427c27f83ce7970)
+  stayed inside the policy, but the validators agreed there was no breach.
+- `stake-2` — **slashed**: the page under its policy was the IANA example page rather than the
+  promised text, the validators agreed `breach: true` through real comparative consensus, and the
+  sha-256 of the whole 911-character document (`27319d96…`) is stored with the verdict.
+- `stake-3` — **released**, units returned.
+
+### Hardening (v0.4)
+
+The slash path is the part that moves value, so it is the part with the constraints:
+the evidence policy is fixed by the staker at creation time, the judged text is a bounded
+deterministic digest of the **whole** document rather than its opening, the verdict must be a
+literal JSON boolean, obligation/claim/page text are quoted as untrusted data with injection
+phrasing flagged, and a comparative-consensus failure reverts the transaction instead of quietly
+switching strategy. `tests/test_adversarial.py` holds the attacks; `STUDIO_DEV_DEPLOY.md` has the
+per-request breakdown.
 
 ## The console
 
 [`web/`](web/) — Next.js 16 + `genlayer-js` 2.0.0-rc.1 + MetaMask, exported statically to GitHub
 Pages. It handles the full transaction lifecycle: it estimates the Studio Dev fee, signs through the
-wallet on chain 61997, waits for `ACCEPTED`, then re-reads the contract.
+wallet on chain 61997, waits for `ACCEPTED` — which it labels *accepted — awaiting finalization*,
+because acceptance is not completion — then keeps polling until the chain reports `FINALIZED` and
+re-reads the contract at each stage.
 
 | Panel | Calls |
 |---|---|
 | Stake against a promise | `stake` (plus owner-only `credit_reputation`) |
 | Release it | `release` |
-| Ask for a slash | `slash` — arbiter only, with two example evidence URLs: one where the network refuses the slash, one where it agrees |
-| Stakes on chain / events | `list_ids`, `get_stake`, `get_stats`, `get_balance`, `get_events` |
+| Ask for a slash | `slash` — arbiter only. `check_evidence_url` dry-runs the stake's policy for free first, and two example URLs show both outcomes: one the network refuses, one it agrees to |
+| Stakes on chain / events | `list_ids`, `get_stake`, `get_stats`, `get_balance`, `get_events`, `get_evidence_policy` |
 
 ```bash
 cd web
@@ -99,7 +119,7 @@ chains without validator consensus.
 
 ```bash
 pip install -r requirements-dev.txt
-coverage run -m pytest -q && coverage report -m     # 13 tests
+coverage run -m pytest -q && coverage report -m     # 37 tests
 ```
 
 The suite substitutes a fake GenVM module and covers the lifecycle, access control, validation and

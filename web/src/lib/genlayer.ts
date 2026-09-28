@@ -66,12 +66,20 @@ export async function readContract<T = unknown>(
   return enqueue(() => client.readContract({ address, functionName, args }) as Promise<T>);
 }
 
+/**
+ * A Studio Dev transaction reaches ACCEPTED first (the leader's result was agreed) and
+ * FINALIZED later (the appeal window closed). The two are different guarantees, so the
+ * caller is told about each one instead of treating acceptance as completion.
+ */
+export type TxStage = "accepted" | "finalized";
+
 export async function writeAndWait(
   account: Address,
   provider: unknown,
   address: Address,
   functionName: string,
   args: CalldataEncodable[] = [],
+  onStage?: (stage: TxStage, hash: string) => void,
 ): Promise<string> {
   const client = getWriteClient(account, provider as EthereumProvider);
   // Studio Dev enforces the fee system: every tx must carry a non-zero fee deposit.
@@ -89,7 +97,32 @@ export async function writeAndWait(
     retries: 200,
     interval: 3000,
   });
+  onStage?.("accepted", hash);
+  // Finalization is a separate, slower guarantee; the UI keeps showing "accepted" until
+  // it lands, and a finalization that never arrives is reported rather than assumed.
+  void waitForFinalized(hash).then((ok) => {
+    if (ok) onStage?.("finalized", hash);
+  });
   return hash;
+}
+
+/** Poll the transaction until the chain reports FINALIZED. Returns false on timeout. */
+export async function waitForFinalized(hash: string, attempts = 80): Promise<boolean> {
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const tx = await rpcOnce<{ status?: string }>("eth_getTransactionByHash", [hash]);
+      if (String(tx?.status || "").toUpperCase() === "FINALIZED") return true;
+    } catch {
+      // transient RPC failure: keep polling
+    }
+    await sleep(4000);
+  }
+  return false;
+}
+
+export async function getTxStatus(hash: string): Promise<string> {
+  const tx = await rpc<{ status?: string }>("eth_getTransactionByHash", [hash]);
+  return String(tx?.status || "unknown").toUpperCase();
 }
 
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
