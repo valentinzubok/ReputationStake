@@ -1,6 +1,6 @@
 /** Live ReputationStake deploy on GenLayer Studio Dev (chain 61997). Override via env. */
 export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_REPUTATIONSTAKE_ADDRESS ||
-  "0x795b7661E10dF78BEd921dB7986C05b115614015") as `0x${string}`;
+  "0x1E075794c6404F8f5b9ef87aE29Cf77071Cec86f") as `0x${string}`;
 
 /** Studio Dev / Studio Next — chain ID 61997. */
 export const CHAIN_ID = 61997;
@@ -27,3 +27,7 @@ export const EVIDENCE_EXAMPLES = [
 ];
 
 export const DEFAULT_PURPOSE = "Publish a page whose text says: Hello world";
+
+/** Evidence sources a slash on a new stake may cite, agreed by the staker up front. */
+export const DEFAULT_POLICY =
+  "https://test-server.genlayer.com/static/genvm, https://example.com";

@@ -5,7 +5,7 @@ GenLayer IC for reputation escrow with consensus-gated slash.
 | Item | Value |
 |------|--------|
 | File | [`ReputationStake.py`](./ReputationStake.py) |
-| Studio Dev (61997) | [`0x795b7661E10dF78BEd921dB7986C05b115614015`](https://explorer-studio-dev.genlayer.com/address/0x795b7661E10dF78BEd921dB7986C05b115614015) |
+| Studio Dev (61997) | [`0x1E075794c6404F8f5b9ef87aE29Cf77071Cec86f`](https://explorer-studio-dev.genlayer.com/address/0x1E075794c6404F8f5b9ef87aE29Cf77071Cec86f) |
 | App bindings | [`web/src/lib/contracts.ts`](../web/src/lib/contracts.ts) |
 
 ## Roles

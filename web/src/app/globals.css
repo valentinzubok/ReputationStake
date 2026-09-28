@@ -558,3 +558,32 @@ footer.foot {
     transition: none !important;
   }
 }
+
+/* ── transaction stage: ACCEPTED and FINALIZED are different guarantees ───── */
+
+.stagepill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+.stagepill.accepted {
+  color: var(--amber);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.stagepill.final {
+  color: var(--mint);
+}
+
+code.policy {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.05rem 0.35rem;
+  margin-right: 0.3rem;
+  font-size: 0.72rem;
+}

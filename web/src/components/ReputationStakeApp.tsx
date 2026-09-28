@@ -5,6 +5,7 @@ import {
   CHAIN_ID,
   CONTRACT_ADDRESS,
   CONTRACT_REPO,
+  DEFAULT_POLICY,
   DEFAULT_PURPOSE,
   EVIDENCE_EXAMPLES,
   EXPLORER,
@@ -12,6 +13,7 @@ import {
   txUrl,
 } from "@/lib/config";
 import {
+  checkEvidenceUrl,
   creditReputation,
   getArbiter,
   getBalance,
@@ -25,18 +27,21 @@ import {
   stake,
   type Balance,
   type EventRow,
+  type PolicyCheck,
   type StakeRow,
   type Stats,
 } from "@/lib/contracts";
-import { fundWithTestGen, getNativeBalance } from "@/lib/genlayer";
+import { fundWithTestGen, getNativeBalance, type TxStage } from "@/lib/genlayer";
 import { useWallet } from "./WalletProvider";
 
 const short = (h: string, n = 10) => (h ? `${h.slice(0, n)}…${h.slice(-4)}` : "—");
 const shortHash = (h: string) => (h ? `${h.slice(0, 16)}…` : "—");
 
-/** The slash the network refused: evidence did not support the claim, so the call reverted. */
-const REJECTED_SLASH_TX =
-  "0xe0353c6a01b204dcfd4de92d0006417d49eea39b7966ef8153d04ac06c8fe46e";
+/** Two slashes the contract refused, for the two different reasons. */
+const REJECTED_OUT_OF_POLICY_TX =
+  "0xb0422555adcce9a68cb300d91f923b30997be8089dcefbdd9c34df8a4de44a12";
+const REJECTED_NO_BREACH_TX =
+  "0x16441e992916cd209f2fd07c574c1a5a1b1a3f6d2ef3c0561427c27f83ce7970";
 
 const EVENT_TONE: Record<string, string> = {
   StakeCreated: "",
@@ -84,9 +89,13 @@ export function ReputationStakeApp() {
   const [ok, setOk] = useState(false);
   const [tx, setTx] = useState("");
 
+  const [stage, setStage] = useState<TxStage | "">("");
+  const [policyCheck, setPolicyCheck] = useState<PolicyCheck | null>(null);
+
   const [amount, setAmount] = useState("100");
   const [target, setTarget] = useState("");
   const [purpose, setPurpose] = useState(DEFAULT_PURPOSE);
+  const [policy, setPolicy] = useState(DEFAULT_POLICY);
 
   const [slashId, setSlashId] = useState("");
   const [reason, setReason] = useState("the published page is not the agreed page");
@@ -126,6 +135,13 @@ export function ReputationStakeApp() {
     void refresh();
   }, [refresh]);
 
+  /** ACCEPTED and FINALIZED are different guarantees; the UI never conflates them. */
+  const onStage = (next: TxStage, hash: string) => {
+    setTx(hash);
+    setStage(next);
+    if (next === "finalized") void refresh();
+  };
+
   const run = async (name: string, fn: () => Promise<string | void>) => {
     if (!address || !provider) {
       setMsg("Connect MetaMask for writes");
@@ -134,12 +150,13 @@ export function ReputationStakeApp() {
     }
     setBusy(name);
     setMsg("");
+    setStage("");
     try {
       const hash = await fn();
       if (hash) setTx(hash);
       await refresh();
       // Set the message after refresh: refresh() clears state while it reloads.
-      setMsg(`${name} OK`);
+      setMsg(`${name}: accepted by consensus`);
       setOk(true);
     } catch (e) {
       setMsg(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -224,7 +241,14 @@ export function ReputationStakeApp() {
           {msg && <p className={ok ? "okmsg" : "msg"}>{msg}</p>}
           {tx && (
             <p className="tx muted">
-              last tx <a href={txUrl(tx)}>{tx}</a>
+              last tx <a href={txUrl(tx)}>{short(tx, 14)}</a>{" "}
+              {stage === "finalized" ? (
+                <span className="stagepill final">finalized</span>
+              ) : (
+                <span className="stagepill accepted">
+                  accepted — awaiting finalization
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -259,9 +283,24 @@ export function ReputationStakeApp() {
             value={purpose}
             onChange={(e) => setPurpose(e.target.value)}
           />
+          <label htmlFor="policy">Evidence policy (https sources a slash may cite)</label>
+          <textarea
+            id="policy"
+            rows={2}
+            value={policy}
+            onChange={(e) => setPolicy(e.target.value)}
+          />
+          <p className="muted">
+            Agreed now, by you. At dispute time the arbiter can only cite a URL under one of
+            these sources — same host, same path branch.
+          </p>
           <button
-            disabled={disabled || !target}
-            onClick={() => void run("stake", () => stake(acct, provider, amount, target, purpose))}
+            disabled={disabled || !target || !policy.trim()}
+            onClick={() =>
+              void run("stake", () =>
+                stake(acct, provider, amount, target, purpose, policy, onStage),
+              )
+            }
           >
             {busy === "stake" ? (
               <span className="working">
@@ -293,7 +332,9 @@ export function ReputationStakeApp() {
           />
           <button
             disabled={disabled || !releaseId}
-            onClick={() => void run("release", () => release(acct, provider, releaseId))}
+            onClick={() =>
+              void run("release", () => release(acct, provider, releaseId, onStage))
+            }
           >
             {busy === "release" ? (
               <span className="working">
@@ -317,7 +358,7 @@ export function ReputationStakeApp() {
                 disabled={disabled || !target}
                 onClick={() =>
                   void run("credit_reputation", () =>
-                    creditReputation(acct, provider, target, amount),
+                    creditReputation(acct, provider, target, amount, onStage),
                   )
                 }
               >
@@ -364,9 +405,27 @@ export function ReputationStakeApp() {
             ))}
           </p>
           <button
+            className="ghost"
+            disabled={!slashId || !evidence}
+            onClick={async () => {
+              setPolicyCheck(await checkEvidenceUrl(slashId, evidence));
+            }}
+          >
+            check this URL against the stake&apos;s policy (free)
+          </button>
+          {policyCheck && (
+            <p className={policyCheck.allowed ? "okmsg" : "msg"}>
+              {policyCheck.allowed
+                ? `allowed by ${policyCheck.source}`
+                : policyCheck.error || "not allowed"}
+            </p>
+          )}
+          <button
             disabled={disabled || !slashId || !isArbiter}
             onClick={() =>
-              void run("slash", () => slash(acct, provider, slashId, reason, evidence))
+              void run("slash", () =>
+                slash(acct, provider, slashId, reason, evidence, onStage),
+              )
             }
           >
             {busy === "slash" ? (
@@ -384,10 +443,14 @@ export function ReputationStakeApp() {
             </p>
           )}
           <p className="muted">
-            A rejected slash leaves no state behind, so it never shows in the lists below — the
-            proof is the transaction itself:{" "}
-            <a href={txUrl(REJECTED_SLASH_TX)}>{shortHash(REJECTED_SLASH_TX)}</a> tried to slash
-            stake-1 with the hello page as evidence and the validators found no breach.
+            A refused slash leaves no state behind, so it never shows in the lists below — the
+            proof is the transaction. Both refusals happened on this contract:{" "}
+            <a href={txUrl(REJECTED_OUT_OF_POLICY_TX)}>
+              {shortHash(REJECTED_OUT_OF_POLICY_TX)}
+            </a>{" "}
+            cited a URL outside stake-1&apos;s policy and was rejected before any model ran, and{" "}
+            <a href={txUrl(REJECTED_NO_BREACH_TX)}>{shortHash(REJECTED_NO_BREACH_TX)}</a> stayed
+            inside the policy but the validators agreed there was no breach.
           </p>
         </section>
       </div>
@@ -406,12 +469,27 @@ export function ReputationStakeApp() {
             <p className="hashline">
               staker <code>{short(r.staker)}</code> → target <code>{short(r.target)}</code>
             </p>
+            <p className="hashline">
+              evidence policy:{" "}
+              {(r.evidence_policy || []).length === 0 ? (
+                <em>none — this stake cannot be slashed</em>
+              ) : (
+                (r.evidence_policy || []).map((src) => (
+                  <code key={src} className="policy">
+                    {src}
+                  </code>
+                ))
+              )}
+            </p>
             {r.status === "slashed" && (
               <div className="verdictbox">
                 <strong>breach agreed by validators.</strong> Claim: {r.reason}
                 <div className="hashline">
-                  evidence <a href={r.evidence_url}>{r.evidence_url}</a> · sha-256{" "}
-                  <code>{shortHash(r.evidence_hash)}</code>
+                  evidence <a href={r.evidence_url}>{r.evidence_url}</a> (allowed by{" "}
+                  <code>{r.evidence_source}</code>) · sha-256 of the whole{" "}
+                  {r.evidence_chars}-character document{" "}
+                  <code>{shortHash(r.evidence_hash)}</code>, of which{" "}
+                  {r.evidence_covered_chars} characters were judged
                 </div>
               </div>
             )}
